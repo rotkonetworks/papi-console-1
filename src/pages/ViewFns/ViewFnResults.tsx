@@ -1,5 +1,5 @@
 import { ButtonGroup } from "@/components/ButtonGroup"
-import { useStateObservable } from "@react-rxjs/core"
+import { useStateObservable, withDefault } from "@react-rxjs/core"
 import { Trash2 } from "lucide-react"
 import { FC, useState } from "react"
 import { ValueDisplay } from "../Storage/StorageSubscriptions"
@@ -10,6 +10,7 @@ import {
   viewFnResultKeys$,
 } from "./viewFns.state"
 import { PathsRoot } from "@/codec-components/common/paths.state"
+import { runtimeCtx$ } from "@/state/chains/chain.state"
 
 export const ViewFnResults: FC = () => {
   const keys = useStateObservable(viewFnResultKeys$)
@@ -69,10 +70,14 @@ const ViewFnResultBox: FC<{ subscription: string }> = ({ subscription }) => {
   )
 }
 
+const defaultedCtx$ = runtimeCtx$.pipeState(withDefault(null))
 const ResultDisplay: FC<{
   viewFnResult: ViewFnResult
   mode: "json" | "decoded"
 }> = ({ viewFnResult, mode }) => {
+  const ctx = useStateObservable(defaultedCtx$)
+  if (!ctx) return null
+
   if ("error" in viewFnResult) {
     return (
       <div className="text-sm">
@@ -90,6 +95,7 @@ const ResultDisplay: FC<{
     <div className="max-h-[60svh] overflow-auto">
       <ValueDisplay
         mode={mode}
+        ctx={ctx}
         type={viewFnResult.type}
         value={viewFnResult.result}
         title={"Result"}
