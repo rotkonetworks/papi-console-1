@@ -79,17 +79,17 @@ const ValueSubscriptionBox: FC<{ subscription: string }> = ({
   if (!storageSubscription) return null
   const status = storageSubscription.status
   if (status.type !== "value") return null
-  const { ctx, payload, type, hash } = status.value
+  const { ctx, payload, type, blockHash } = status.value
 
   return (
     <SubscriptionBox
       subscription={subscription}
       actions={
-        hash ? (
+        blockHash ? (
           <div className="text-center">
-            <p className="text-sm">Hash</p>
-            <Link to={`/explorer/${hash}`} className="underline">
-              <p className="font-mono text-xs">{shortStr(hash, 6)}</p>
+            <p className="text-sm">Block Hash</p>
+            <Link to={`/explorer/${blockHash}`} className="underline">
+              <p className="font-mono text-xs">{shortStr(blockHash, 6)}</p>
             </Link>
           </div>
         ) : null
