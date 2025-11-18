@@ -130,7 +130,12 @@ export const StorageQuery: FC = () => {
         args,
         single,
         keyCodec,
-        value: at(hash),
+        value: at(hash).pipe(
+          map((r) => ({
+            ...r,
+            blockHash: hash,
+          })),
+        ),
       })
     } else {
       addStorageSubscription({

@@ -48,7 +48,7 @@ export const StorageDecode: FC = () => {
         type: entry!.value,
         payload: decoded,
         ctx: ctx!,
-        hash: null,
+        blockHash: null,
       }),
     })
   }

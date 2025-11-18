@@ -183,7 +183,7 @@ export const [newStorageSubscription$, addStorageSubscription] = createSignal<{
   value?: Observable<{
     type: number
     ctx: Pick<RuntimeContext, "lookup" | "dynamicBuilder">
-    hash: string | null
+    blockHash: HexString | null
     payload: unknown
   }>
 }>()
@@ -214,12 +214,14 @@ export type StorageSubscription = {
   completed: boolean
   status: Enum<{
     loading: undefined
+    // Non-subscription: fetches/decodes one value, then done
     value: {
-      hash: string | null
+      blockHash: HexString | null
       ctx: Pick<RuntimeContext, "lookup" | "dynamicBuilder">
       type: number
       payload: unknown
     }
+    // For subscriptions, adds one new value on every change
     values: Array<StorageSubscriptionValue>
   }>
 }
