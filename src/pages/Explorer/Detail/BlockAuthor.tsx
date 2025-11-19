@@ -16,13 +16,14 @@ import { FC, useEffect } from "react"
 import {
   catchError,
   combineLatest,
+  filter,
   from,
   map,
   Observable,
   switchMap,
   take,
 } from "rxjs"
-import { blockInfo$, BlockState, finalized$ } from "../block.state"
+import { blockInfoState$, BlockState, finalized$ } from "../block.state"
 
 const validatorCache: WeakMap<
   PolkadotClient,
@@ -56,7 +57,10 @@ const validators$ = state(
       switchMap((client) =>
         combineLatest([
           fetchCachedValidators$(client, block),
-          blockInfo$(block).pipe(map((v) => v.status)),
+          blockInfoState$(block).pipe(
+            filter((v) => v != null),
+            map((v) => v?.status),
+          ),
         ]).pipe(
           map(([{ idx, validators }, blockStatus]) => {
             if (
@@ -123,7 +127,14 @@ const BabePreDigest = Variant({
 })
 
 const getAuthorityIdx = (header: BlockHeader) => {
-  const preRuntime = header.digests.find((d) => d.type === "preRuntime")?.value
+  const preRuntime = header.digests.find(
+    (d) => d.type === "preRuntime" && ["BABE", "aura"].includes(d.value.engine),
+  )?.value as
+    | {
+        engine: string
+        payload: HexString
+      }
+    | undefined
 
   switch (preRuntime?.engine) {
     case "BABE": {
