@@ -120,7 +120,7 @@ const NetworkSwitchDialogContent: FC<{
 
   return (
     <DialogContent
-      className="sm:max-w-[425px] min-h-[450px] max-h-full flex flex-col w-auto"
+      className="sm:max-w-[425px] sm:min-w-[425px] min-h-[450px] max-h-full flex flex-col w-auto"
       onEscapeKeyDown={(evt) => {
         if (
           evt.target instanceof HTMLElement &&
@@ -198,7 +198,7 @@ const NetworkSwitchDialogContent: FC<{
           </CommandPopover>
           <div className="h-[50vh] flex flex-col gap-2">
             {selectedNetwork ? (
-              <div className="grow-1 overflow-hidden flex flex-col">
+              <div className="grow overflow-hidden flex flex-col">
                 <p className="py-2">Network: {selectedNetwork.display}</p>
                 <div className="overflow-auto">
                   <RadioGroup
@@ -281,7 +281,7 @@ const ConnectionOption: FC<{
   >
     <div className="flex items-start space-x-2">
       <RadioGroupItem value={value} id={`chain-${value}`} className="mt-1" />
-      <div className="grid gap-0.5 flex-grow">
+      <div className="grid gap-0.5 grow">
         <Label htmlFor={`chain-${value}`} className="font-medium">
           {name}
           {type === "light" ? (
