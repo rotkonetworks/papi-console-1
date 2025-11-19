@@ -1,20 +1,27 @@
 import { withDefault } from "@react-rxjs/core"
-import { map, switchMap } from "rxjs"
+import { combineLatest, map, switchMap } from "rxjs"
 import { client$ } from "./chains/chain.state"
 
 export const chainProperties$ = client$.pipeState(
-  switchMap((v) => v.getChainSpecData()),
-  map((v) => v.properties),
+  switchMap((v) =>
+    combineLatest([
+      v.getChainSpecData().then((r) => r.properties),
+      v
+        .getUnsafeApi()
+        .constants.System.SS58Prefix()
+        .catch(() => null) as Promise<number | null>,
+    ]),
+  ),
   map(
-    (
-      v,
-    ): {
+    ([properties, ss58Ct]): {
       ss58Format?: number
       tokenDecimals?: number
       tokenSymbol?: string
     } => {
-      if (v && typeof v === "object") {
-        const { ss58Format, tokenDecimals, tokenSymbol } = v
+      const ss58Format = ss58Ct ?? properties?.ss58Format
+
+      if (properties && typeof properties === "object") {
+        const { tokenDecimals, tokenSymbol } = properties
 
         return {
           ss58Format,
@@ -22,7 +29,7 @@ export const chainProperties$ = client$.pipeState(
           tokenSymbol,
         }
       }
-      return {}
+      return { ss58Format }
     },
   ),
   withDefault(null),
