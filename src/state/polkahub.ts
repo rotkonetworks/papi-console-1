@@ -31,9 +31,23 @@ const removeSuspense = <T>() =>
     filter<T | SUSPENSE, T>((v): v is T => v !== SUSPENSE),
   )
 
+const getNetworkInfo = () =>
+  firstValueFrom(
+    chainProperties$.pipe(
+      removeSuspense(),
+      filter((v) => v != null),
+      map(({ tokenDecimals, tokenSymbol }) => ({
+        decimals: tokenDecimals!,
+        tokenSymbol: tokenSymbol!,
+      })),
+    ),
+  )
+
 const selectedAccountPlugin = createSelectedAccountPlugin()
 const pjsWalletProvider = createPjsWalletProvider()
-const polkadotVaultProvider = createPolkadotVaultProvider()
+const polkadotVaultProvider = createPolkadotVaultProvider({
+  getNetworkInfo,
+})
 const readOnlyProvider$ = canSetStorage$.pipe(
   liftSuspense(),
   filter((v) => v !== SUSPENSE),
@@ -43,23 +57,10 @@ const readOnlyProvider$ = canSetStorage$.pipe(
     }),
   ),
 )
-const ledgerAccountProvider = createLedgerProvider(
-  async () => {
-    const module = await import("@ledgerhq/hw-transport-webusb")
-    return module.default.create()
-  },
-  () =>
-    firstValueFrom(
-      chainProperties$.pipe(
-        removeSuspense(),
-        filter((v) => v != null),
-        map(({ tokenDecimals, tokenSymbol }) => ({
-          decimals: tokenDecimals!,
-          tokenSymbol: tokenSymbol!,
-        })),
-      ),
-    ),
-)
+const ledgerAccountProvider = createLedgerProvider(async () => {
+  const module = await import("@ledgerhq/hw-transport-webusb")
+  return module.default.create()
+}, getNetworkInfo)
 const walletConnectProvider = createWalletConnectProvider(
   import.meta.env.VITE_REOWN_PROJECT_ID,
   [
