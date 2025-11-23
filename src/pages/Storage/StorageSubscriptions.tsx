@@ -235,7 +235,7 @@ const ValuesSubscriptionBox: FC<{ subscription: string }> = ({
           <ResultDisplay
             id={subscription}
             subValue={targetValue}
-            single
+            single={storageSubscription.single}
             mode={mode}
           />
         ) : null
