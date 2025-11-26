@@ -379,8 +379,8 @@ const [getStorageSubscription$, storageSubscriptionKeyChange$] = partitionByKey(
               ...props,
               status: Enum("loading"),
             }),
-            shareReplay(1),
             takeUntil(stopStorageSubscription$(id)),
+            shareReplay(1),
           )
           const completed$ = concat(
             of(false),
