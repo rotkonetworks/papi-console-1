@@ -70,6 +70,14 @@ export const recentEvents$ = state(
         events: block.events
           ?.map((evt, index) => ({ ...evt, index }))
           .filter(filterEvt)
+          .filter(
+            (evt) =>
+              !(
+                evt.phase.type === "Initialization" &&
+                evt.event.type === "Balances" &&
+                evt.event.value.type === "Transfer"
+              ),
+          )
           .map((evt) => ({
             index: evt.index,
             event: evt.event,
