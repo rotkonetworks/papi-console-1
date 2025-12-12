@@ -4,6 +4,7 @@ import {
 } from "@/chopsticks/chopsticks"
 import { getHashParams, setHashParams } from "@/hashParams"
 import { getDynamicBuilder, getLookupFn } from "@polkadot-api/metadata-builders"
+import type { ChainHead$ } from "@polkadot-api/observable-client"
 import {
   decAnyMetadata,
   HexString,
@@ -16,6 +17,7 @@ import { createSignal } from "@react-rxjs/utils"
 import { get, update } from "idb-keyval"
 import { createClient } from "polkadot-api"
 import { withLogsRecorder } from "polkadot-api/logs-provider"
+import { JsonRpcProvider } from "polkadot-api/ws-provider"
 import {
   catchError,
   concat,
@@ -23,7 +25,6 @@ import {
   filter,
   finalize,
   firstValueFrom,
-  from,
   map,
   mergeMap,
   NEVER,
@@ -50,7 +51,6 @@ import {
   getWebsocketProvider,
   WebsocketSource,
 } from "./websocket"
-import type { ChainHead$ } from "@polkadot-api/observable-client"
 
 export type ChainSource = WebsocketSource | SmoldotSource
 
@@ -74,6 +74,55 @@ const getRpcLogsEnabled = () => localStorage.getItem("rpc-logs") === "true"
 console.log("You can enable JSON-RPC logs by calling `setRpcLogsEnabled(true)`")
 ;(window as any).setRpcLogsEnabled = setRpcLogsEnabled
 
+let nextConnectionId = 0
+export const withDevTools =
+  (parent: JsonRpcProvider): JsonRpcProvider =>
+  (onMsg) => {
+    const conId = nextConnectionId++
+
+    window.postMessage({
+      type: "json-rpc-devtools-msg",
+      value: {
+        type: "connect",
+        value: { conId, wen: Date.now() },
+      },
+    })
+
+    const parentConnection = parent((msg) => {
+      window.postMessage({
+        type: "json-rpc-devtools-msg",
+        value: {
+          type: "inbound",
+          value: { conId, wen: Date.now(), msg },
+        },
+      })
+      onMsg(msg)
+    })
+
+    return {
+      send(msg) {
+        window.postMessage({
+          type: "json-rpc-devtools-msg",
+          value: {
+            type: "outbound",
+            value: { conId, wen: Date.now(), msg },
+          },
+        })
+        parentConnection.send(msg)
+      },
+      disconnect() {
+        window.postMessage({
+          type: "json-rpc-devtools-msg",
+          value: {
+            type: "disconnect",
+            value: { conId, wen: Date.now() },
+          },
+        })
+        parentConnection.disconnect()
+      },
+    }
+  }
+
 export const getProvider = (source: ChainSource) => {
   // TODO bug: provider is not getting disconnected
   chopsticksInstance$.next(null)
@@ -85,11 +134,13 @@ export const getProvider = (source: ChainSource) => {
         : getWebsocketProvider(source)
       : getSmoldotProvider(source)
 
-  return withLogsRecorder((msg) => {
-    if (import.meta.env.DEV || getRpcLogsEnabled()) {
-      console.debug(msg)
-    }
-  }, provider)
+  return withDevTools(
+    withLogsRecorder((msg) => {
+      if (import.meta.env.DEV || getRpcLogsEnabled()) {
+        console.debug(msg)
+      }
+    }, provider),
+  )
 }
 
 export const [selectedChainChanged$, onChangeChain] =
@@ -179,17 +230,7 @@ const addEntryToCache = (
 // TODO: ATM chopsticks hash is not implemented
 // avoid cache in this situation
 // remove `| null` when it is
-const getMetadata = (codeHash: string | null) =>
-  codeHash
-    ? from(get<MetadataCache>(IDB_KEY)).pipe(
-        map((cache) => {
-          const entry = cache?.get(codeHash)
-          if (!entry) return null
-          addEntryToCache(codeHash, { ...entry, time: Date.now() })
-          return fromHex(entry.data)
-        }),
-      )
-    : of(null)
+const getMetadata = (_codeHash: string | null) => of(null)
 
 // TODO: ATM chopsticks hash is not implemented
 // avoid cache in this situation
@@ -274,6 +315,7 @@ export const runtimeCtxAt$ = state((atBlock: string) =>
     mergeMap((client) => {
       const pinned = client.chainHead.pinnedBlocks$.state
       return (
+        // eslint-disable-next-line @typescript-eslint/no-non-null-asserted-optional-chain
         pinned.runtimes[pinned.blocks.get(atBlock)?.runtime!]?.runtime ||
         client.chainHead.getRuntimeContext$(atBlock)
       )
