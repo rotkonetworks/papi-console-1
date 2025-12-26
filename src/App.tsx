@@ -4,6 +4,7 @@ import { Accounts } from "./pages/Accounts/Accounts"
 import { Constants } from "./pages/Constants"
 import { Explorer } from "./pages/Explorer"
 import { Extrinsics } from "./pages/Extrinsics"
+import { Script } from "./pages/Script"
 import { Header } from "./pages/Header"
 import { Metadata } from "./pages/Metadata"
 import { RpcCalls } from "./pages/RpcCalls"
@@ -21,6 +22,7 @@ export default function App() {
           <Routes>
             <Route path="explorer/*" element={<Explorer />} />
             <Route path="extrinsics/*" element={<Extrinsics />} />
+            <Route path="script/*" element={<Script />} />
             <Route path="storage/*" element={<Storage />} />
             <Route path="constants/*" element={<Constants />} />
             <Route path="runtimeCalls/*" element={<RuntimeCalls />} />

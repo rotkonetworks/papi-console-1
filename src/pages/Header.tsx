@@ -13,6 +13,7 @@ const navigationItems = [
   { path: "/explorer", label: "Explorer", important: true },
   { path: "/storage", label: "Storage", important: true },
   { path: "/extrinsics", label: "Extrinsics", important: true },
+  { path: "/script", label: "Script", important: false },
   { path: "/constants", label: "Constants", important: false },
   { path: "/runtimeCalls", label: "Runtime Calls", important: true },
   { path: "/accounts", label: "Accounts", important: false },

@@ -1,8 +1,7 @@
 import { BinaryDisplay } from "@/codec-components/LookupTypeEdit"
-import { ButtonGroup } from "@/components/ButtonGroup"
 import { LoadingMetadata } from "@/components/Loading"
 import { withSubscribe } from "@/components/withSuspense"
-import { getHashParams, setHashParams } from "@/hashParams"
+import { getHashParams, setHashParams, Link } from "@/hashParams"
 import { runtimeCtx$ } from "@/state/chains/chain.state"
 import {
   CodecComponentType,
@@ -12,11 +11,12 @@ import { Binary } from "@polkadot-api/substrate-bindings"
 import { toHex } from "@polkadot-api/utils"
 import { state, useStateObservable } from "@react-rxjs/core"
 import { useLayoutEffect, useState } from "react"
-import { useLocation } from "react-router-dom"
+import { useLocation, Routes, Route } from "react-router-dom"
 import { map } from "rxjs"
 import { twMerge } from "tailwind-merge"
 import { EditMode } from "./EditMode"
 import { JsonMode } from "./JsonMode"
+import { CodePreview } from "./CodePreview"
 import { ExtrinsicModal } from "./SubmitTx/SubmitTx"
 import { ActionButton } from "@/components/ActionButton"
 import { Settings } from "lucide-react"
@@ -53,9 +53,31 @@ const customExtensionsCount$ = state(
   null,
 )
 
+const TabLink = ({
+  to,
+  children,
+  active,
+  disabled,
+}: {
+  to: string
+  children: React.ReactNode
+  active: boolean
+  disabled?: boolean
+}) => (
+  <Link
+    to={to}
+    className={twMerge(
+      "px-3 py-1 text-secondary-foreground hover:text-polkadot-500 font-light",
+      active && "bg-accent text-accent-foreground font-bold",
+      disabled && "opacity-50 pointer-events-none",
+    )}
+  >
+    {children}
+  </Link>
+)
+
 export const Extrinsics = withSubscribe(
   () => {
-    const [viewMode, setViewMode] = useState<"edit" | "json">("edit")
     const [editingExtensions, setEditingExtensions] = useState(false)
     const extrinsicProps = useStateObservable(extrinsicProps$)
     const location = useLocation()
@@ -84,6 +106,11 @@ export const Extrinsics = withSubscribe(
       }
     }, [binaryValue])
 
+    const currentTab = location.pathname.split("/").pop() || "builder"
+    const isBuilder = currentTab === "builder" || currentTab === "extrinsics"
+    const isJson = currentTab === "json"
+    const isCode = currentTab === "code"
+
     if (editingExtensions)
       return <CustomSignedExt onClose={() => setEditingExtensions(false)} />
 
@@ -104,21 +131,17 @@ export const Extrinsics = withSubscribe(
         />
 
         <div className="flex flex-row justify-between px-2">
-          <ButtonGroup
-            value={viewMode}
-            onValueChange={setViewMode as any}
-            items={[
-              {
-                value: "edit",
-                content: "Edit",
-              },
-              {
-                value: "json",
-                content: "JSON",
-                disabled: !binaryValue,
-              },
-            ]}
-          />
+          <nav className="inline-flex border border-accent bg-background text-foreground">
+            <TabLink to="/extrinsics/builder" active={isBuilder}>
+              Builder
+            </TabLink>
+            <TabLink to="/extrinsics/json" active={isJson} disabled={!binaryValue}>
+              JSON
+            </TabLink>
+            <TabLink to="/extrinsics/code" active={isCode}>
+              Code
+            </TabLink>
+          </nav>
           <div className="flex flex-row items-center gap-2">
             <ActionButton
               className="text-foreground/70 flex items-center gap-1"
@@ -131,24 +154,42 @@ export const Extrinsics = withSubscribe(
           </div>
         </div>
 
-        {viewMode === "edit" ? (
-          <EditMode
-            {...extrinsicProps}
-            value={componentValue}
-            onUpdate={(value) =>
-              setComponentValue({ type: CodecComponentType.Updated, value })
+        <Routes>
+          <Route
+            path="json"
+            element={
+              <JsonMode
+                value={
+                  typeof binaryValue === "string"
+                    ? Binary.fromHex(binaryValue).asBytes()
+                    : binaryValue
+                }
+                decode={extrinsicProps.codec.dec}
+              />
             }
           />
-        ) : (
-          <JsonMode
-            value={
-              typeof binaryValue === "string"
-                ? Binary.fromHex(binaryValue).asBytes()
-                : binaryValue
+          <Route
+            path="code"
+            element={
+              <CodePreview
+                callData={binaryValue}
+                decode={extrinsicProps.codec.dec}
+              />
             }
-            decode={extrinsicProps.codec.dec}
           />
-        )}
+          <Route
+            path="*"
+            element={
+              <EditMode
+                {...extrinsicProps}
+                value={componentValue}
+                onUpdate={(value) =>
+                  setComponentValue({ type: CodecComponentType.Updated, value })
+                }
+              />
+            }
+          />
+        </Routes>
       </div>
     )
   },
