@@ -53,7 +53,6 @@ export const CodeEditor: FC<{
   const [autocompleteItems, setAutocompleteItems] = useState<Suggestion[]>([])
   const [autocompleteIndex, setAutocompleteIndex] = useState(0)
   const [autocompletePos, setAutocompletePos] = useState({ top: 0, left: 0 })
-  const [autocompletePrefix, setAutocompletePrefix] = useState("")
   const autocompleteRef = useRef<HTMLDivElement>(null)
 
   // refs to avoid rerunning CodeJar effect when autocomplete state changes
@@ -300,7 +299,6 @@ export const CodeEditor: FC<{
           setAutocompletePos(pos)
           setAutocompleteItems(filtered)
           setAutocompleteIndex(0)
-          setAutocompletePrefix(prefix)
           setShowAutocomplete(true)
         }
         return
@@ -329,7 +327,6 @@ export const CodeEditor: FC<{
             if (!same) setAutocompleteIndex(0)
             return namespaces
           })
-          setAutocompletePrefix(prefix)
           setShowAutocomplete(true)
         }
         return
@@ -360,7 +357,6 @@ export const CodeEditor: FC<{
             if (!same) setAutocompleteIndex(0)
             return filtered
           })
-          setAutocompletePrefix(prefix)
           setShowAutocomplete(true)
         }
       } else {
