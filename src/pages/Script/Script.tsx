@@ -1,29 +1,43 @@
-import { CodeEditor, CodeError } from "@/components/CodeEditor"
+import { CodeEditor, CodeError, Suggestion as EditorSuggestion } from "@/components/CodeEditor"
 import { ActionButton } from "@/components/ActionButton"
 import { LoadingMetadata } from "@/components/Loading"
 import { withSubscribe } from "@/components/withSuspense"
-import { unsafeApi$, runtimeCtx$ } from "@/state/chains/chain.state"
+import { unsafeApi$, metadata$ } from "@/state/chains/chain.state"
 import { script$, setScript } from "@/state/script.state"
 import { Binary } from "polkadot-api"
 import { getPolkadotSigner } from "@polkadot-api/signer"
 import { FC, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { firstValueFrom } from "rxjs"
 import { useStateObservable } from "@react-rxjs/core"
-import { Play, Copy, Check, Square, Command, Trash2 } from "lucide-react"
+import { Play, Copy, Check, Square, Command, Trash2, Undo2, Redo2, Share2 } from "lucide-react"
 import { Spinner } from "@/components/Icons"
 import { sr25519CreateDerive } from "@polkadot-labs/hdkd"
 import {
-  DEV_PHRASE,
   entropyToMiniSecret,
   mnemonicToEntropy,
+  sr25519,
 } from "@polkadot-labs/hdkd-helpers"
 import { AccountPicker } from "@polkahub/ui-components"
 import { AddressIdentity, useAvailableAccounts, useSelectedAccount } from "polkahub"
 import { cn } from "@/lib/utils"
 import { UnifiedMetadata, V14Lookup } from "@polkadot-api/substrate-bindings"
 
-const createSigner = (mnemonic: string, derivation = "") => {
-  const entropy = mnemonicToEntropy(mnemonic)
+const groupLabels: Record<string, string> = {
+  ledger: "Ledger",
+  readonly: "Read Only",
+  "polkadot-vault": "Vault",
+  walletconnect: "Wallet Connect",
+}
+
+const DEFAULT_MNEMONIC = "bottom drive obey lake curtain smoke basket hold race lonely fit walk"
+
+const createSigner = (mnemonic: string = `${DEFAULT_MNEMONIC}//Alice`) => {
+  // support derivation paths like "word word word//Alice"
+  const parts = mnemonic.split("//")
+  const words = parts[0].trim()
+  const derivation = parts.length > 1 ? `//${parts.slice(1).join("//")}` : ""
+
+  const entropy = mnemonicToEntropy(words)
   const miniSecret = entropyToMiniSecret(entropy)
   const derive = sr25519CreateDerive(miniSecret)
   const hdkdKeyPair = derive(derivation)
@@ -34,45 +48,63 @@ const createSigner = (mnemonic: string, derivation = "") => {
   )
 }
 
-const getDevSigner = (name: string) => {
-  return createSigner(DEV_PHRASE, `//${name}`)
+const fromSecretKey = (hex: string) => {
+  const secretKey = hex.startsWith("0x") ? hex.slice(2) : hex
+  const publicKey = sr25519.getPublicKey(secretKey)
+  return getPolkadotSigner(
+    publicKey,
+    "Sr25519",
+    (msg) => sr25519.sign(msg, secretKey),
+  )
 }
 
-const EMPTY_SCRIPT = `// signer = selected account (or use getDevSigner("Alice") for dev chains)
+const EMPTY_SCRIPT = `const signer = createSigner()  // Alice
 
-const tx = api.tx.System.remark({
-  remark: Binary.fromText("hello"),
+// watch for transfers and react with a remark
+const sub = api.event.Balances.Transfer.watch().subscribe(async (event) => {
+  const { from, to, amount } = event.payload
+  console.log(\`saw transfer: \${amount} from \${from}\`)
+
+  // react by submitting a remark
+  const tx = api.tx.System.remark({
+    remark: Binary.fromText(\`saw transfer of \${amount}\`)
+  })
+  const result = await tx.signAndSubmit(signer)
+  console.log("remark submitted in block:", result.block.number)
+
+  sub.unsubscribe()
 })
 
-await tx.signAndSubmit(signer)
-console.log("done")
-
-// loop example:
-// for (let i = 0; i < 3; i++) {
-//   const tx = api.tx.System.remark({ remark: Binary.fromText(\`msg \${i}\`) })
-//   await tx.signAndSubmit(signer)
-//   console.log("sent", i)
-// }
+// wait for a transfer (stop button to cancel)
+await sleep(60000)
+sub.unsubscribe()
 `
 
-const groupLabels: Record<string, string> = {
-  ledger: "Ledger",
-  readonly: "Read Only",
-  "polkadot-vault": "Vault",
-  walletconnect: "Wallet Connect",
-}
-
 type Suggestion = {
-  kind: "tx" | "query"
+  kind: "tx" | "query" | "const" | "event" | "error" | "api"
   pallet: string
   name: string
   args: number
   isMap: boolean
+  docs: string
+  fields?: { name: string; type: string }[]
 }
 
 const buildSuggestions = (metadata: UnifiedMetadata): Suggestion[] => {
   const suggestions: Suggestion[] = []
   const lookup = metadata.lookup as V14Lookup
+
+  const getTypeName = (typeId: number): string => {
+    const t = lookup[typeId]
+    if (!t) return "unknown"
+    if (t.def.tag === "primitive") return t.def.value.tag
+    if (t.def.tag === "compact") return `Compact<${getTypeName(t.def.value)}>`
+    if (t.def.tag === "sequence") return `Vec<${getTypeName(t.def.value)}>`
+    if (t.def.tag === "array") return `[${getTypeName(t.def.value.type)}; ${t.def.value.len}]`
+    if (t.def.tag === "tuple") return `(${t.def.value.map(getTypeName).join(", ")})`
+    if (t.path.length > 0) return t.path[t.path.length - 1]
+    return "unknown"
+  }
 
   // add tx calls
   for (const pallet of metadata.pallets) {
@@ -88,6 +120,11 @@ const buildSuggestions = (metadata: UnifiedMetadata): Suggestion[] => {
         name: variant.name,
         args: variant.fields.length,
         isMap: false,
+        docs: variant.docs.join(" ").slice(0, 200),
+        fields: variant.fields.map(f => ({
+          name: f.name ?? "value",
+          type: getTypeName(f.type),
+        })),
       })
     }
   }
@@ -103,6 +140,85 @@ const buildSuggestions = (metadata: UnifiedMetadata): Suggestion[] => {
         name: entry.name,
         args: entry.type.tag === "map" ? entry.type.value.hashers.length : 0,
         isMap: entry.type.tag === "map",
+        docs: entry.docs.join(" ").slice(0, 200),
+      })
+    }
+  }
+
+  // add constants
+  for (const pallet of metadata.pallets) {
+    for (const constant of pallet.constants) {
+      suggestions.push({
+        kind: "const",
+        pallet: pallet.name,
+        name: constant.name,
+        args: 0,
+        isMap: false,
+        docs: constant.docs.join(" ").slice(0, 200),
+      })
+    }
+  }
+
+  // add events
+  for (const pallet of metadata.pallets) {
+    if (!pallet.events) continue
+
+    const eventType = lookup[pallet.events.type]
+    if (!eventType || eventType.def.tag !== "variant") continue
+
+    for (const variant of eventType.def.value) {
+      suggestions.push({
+        kind: "event",
+        pallet: pallet.name,
+        name: variant.name,
+        args: variant.fields.length,
+        isMap: false,
+        docs: variant.docs.join(" ").slice(0, 200),
+        fields: variant.fields.map(f => ({
+          name: f.name ?? "value",
+          type: getTypeName(f.type),
+        })),
+      })
+    }
+  }
+
+  // add errors
+  for (const pallet of metadata.pallets) {
+    if (!pallet.errors) continue
+
+    const errorType = lookup[pallet.errors.type]
+    if (!errorType || errorType.def.tag !== "variant") continue
+
+    for (const variant of errorType.def.value) {
+      suggestions.push({
+        kind: "error",
+        pallet: pallet.name,
+        name: variant.name,
+        args: variant.fields.length,
+        isMap: false,
+        docs: variant.docs.join(" ").slice(0, 200),
+        fields: variant.fields.map(f => ({
+          name: f.name ?? "value",
+          type: getTypeName(f.type),
+        })),
+      })
+    }
+  }
+
+  // add runtime apis
+  for (const api of metadata.apis) {
+    for (const method of api.methods) {
+      suggestions.push({
+        kind: "api",
+        pallet: api.name,
+        name: method.name,
+        args: method.inputs.length,
+        isMap: false,
+        docs: method.docs.join(" ").slice(0, 200),
+        fields: method.inputs.map(i => ({
+          name: i.name,
+          type: getTypeName(i.type),
+        })),
       })
     }
   }
@@ -117,15 +233,45 @@ const generateSnippet = (s: Suggestion): string => {
     if (s.args === 0) {
       return `api.tx.${s.pallet}.${s.name}()`
     }
-    return `api.tx.${s.pallet}.${s.name}({\n  // ${s.args} args\n})`
-  } else {
+    const fields = s.fields?.map(f => `  ${f.name}: ,  // ${f.type}`).join("\n") ?? ""
+    return `api.tx.${s.pallet}.${s.name}({\n${fields}\n})`
+  } else if (s.kind === "query") {
     if (s.args === 0) {
-      return `await api.query.${s.pallet}.${s.name}()`
+      return `await api.query.${s.pallet}.${s.name}.getValue()`
     }
-    if (s.isMap && s.args === 1) {
-      return `await api.query.${s.pallet}.${s.name}(key)`
+    if (s.args === 1) {
+      return `await api.query.${s.pallet}.${s.name}.getValue(key)`
     }
-    return `await api.query.${s.pallet}.${s.name}(/* ${s.args} keys */)`
+    return `await api.query.${s.pallet}.${s.name}.getValue(/* ${s.args} keys */)`
+  } else if (s.kind === "event") {
+    return `api.event.${s.pallet}.${s.name}`
+  } else if (s.kind === "error") {
+    return `api.errors.${s.pallet}.${s.name}`
+  } else if (s.kind === "api") {
+    if (s.args === 0) {
+      return `await api.apis.${s.pallet}.${s.name}()`
+    }
+    const args = s.fields?.map(f => f.name).join(", ") ?? ""
+    return `await api.apis.${s.pallet}.${s.name}(${args})`
+  } else {
+    return `api.constants.${s.pallet}.${s.name}`
+  }
+}
+
+// simple compression for URL sharing using base64
+const encodeScript = (code: string): string => {
+  try {
+    return btoa(encodeURIComponent(code))
+  } catch {
+    return ""
+  }
+}
+
+const decodeScript = (encoded: string): string | null => {
+  try {
+    return decodeURIComponent(atob(encoded))
+  } catch {
+    return null
   }
 }
 
@@ -136,32 +282,28 @@ const ScriptEditor: FC<{ metadata: UnifiedMetadata }> = ({ metadata }) => {
   const [errors, setErrors] = useState<CodeError[]>([])
   const [isRunning, setIsRunning] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [shared, setShared] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
   const [paletteFilter, setPaletteFilter] = useState("")
   const [paletteIndex, setPaletteIndex] = useState(0)
-  const [signerMode, setSignerMode] = useState<"wallet" | "dev" | "custom">("wallet")
-  const [devAccount, setDevAccount] = useState("Alice")
-  const [customMnemonic, setCustomMnemonic] = useState("")
-  const [customDerivation, setCustomDerivation] = useState("")
   const abortRef = useRef<AbortController | null>(null)
   const paletteInputRef = useRef<HTMLInputElement>(null)
+  const undoRedoRef = useRef<{ undo: () => void; redo: () => void; canUndo: () => boolean; canRedo: () => boolean } | null>(null)
+  const [, forceUpdate] = useState(0)
 
   const availableAccounts = useAvailableAccounts()
   const [account, setAccount] = useSelectedAccount()
 
-  const activeSigner = useMemo(() => {
-    if (signerMode === "dev") {
-      return getDevSigner(devAccount)
-    }
-    if (signerMode === "custom" && customMnemonic.trim().split(/\s+/).length >= 12) {
-      try {
-        return createSigner(customMnemonic.trim(), customDerivation || "")
-      } catch {
-        return null
-      }
-    }
-    return account?.signer ?? null
-  }, [signerMode, devAccount, customMnemonic, customDerivation, account])
+  const groups = useMemo(() =>
+    Object.entries(availableAccounts)
+      .map(([group, accounts]) => [group, accounts.filter((acc) => acc.signer)] as const)
+      .filter(([, accounts]) => accounts.length > 0)
+      .map(([key, accounts]) => ({
+        name: groupLabels[key] ?? key,
+        accounts,
+      })),
+    [availableAccounts]
+  )
 
   const allSuggestions = useMemo(() => buildSuggestions(metadata), [metadata])
 
@@ -176,20 +318,39 @@ const ScriptEditor: FC<{ metadata: UnifiedMetadata }> = ({ metadata }) => {
       .slice(0, 50)
   }, [allSuggestions, paletteFilter])
 
-  const groups = useMemo(() =>
-    Object.entries(availableAccounts)
-      .map(([group, accounts]) => [group, accounts.filter((acc) => acc.signer)] as const)
-      .filter(([, accounts]) => accounts.length > 0)
-      .map(([key, accounts]) => ({
-        name: groupLabels[key] ?? key,
-        accounts,
-      })),
-    [availableAccounts]
+  // suggestions for inline editor autocomplete
+  const editorSuggestions: EditorSuggestion[] = useMemo(() =>
+    allSuggestions.map(s => ({
+      label: `${s.pallet}.${s.name}`,
+      insert: s.kind === "tx"
+        ? `${s.pallet}.${s.name}(${s.args > 0 ? "{ }" : ""})`
+        : s.kind === "query"
+          ? `${s.pallet}.${s.name}.getValue(${s.args > 0 ? "key" : ""})`
+          : s.kind === "api"
+            ? `${s.pallet}.${s.name}(${s.args > 0 ? s.fields?.map(f => f.name).join(", ") : ""})`
+            : `${s.pallet}.${s.name}`,
+      kind: s.kind,
+      docs: s.docs,
+      fields: s.fields,
+    })),
+    [allSuggestions]
   )
 
   useEffect(() => {
     if (!initializedRef.current) {
       initializedRef.current = true
+      // check URL for shared script
+      const params = new URLSearchParams(window.location.search)
+      const encodedScript = params.get("code")
+      if (encodedScript) {
+        const decoded = decodeScript(encodedScript)
+        if (decoded) {
+          setScript(decoded)
+          // clean URL
+          window.history.replaceState({}, "", window.location.pathname)
+          return
+        }
+      }
       if (!script) {
         setScript(EMPTY_SCRIPT)
       }
@@ -256,19 +417,16 @@ const ScriptEditor: FC<{ metadata: UnifiedMetadata }> = ({ metadata }) => {
   }
 
   const runScript = async () => {
-    if (!activeSigner) {
-      setOutput(["error: no valid signer configured"])
-      return
-    }
-
     setIsRunning(true)
     setOutput([])
     setErrors([])
     abortRef.current = new AbortController()
 
+    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor
+
     try {
       try {
-        new Function(script)
+        new AsyncFunction(script)
       } catch (syntaxErr) {
         const parsed = parseError(syntaxErr)
         if (parsed.line) {
@@ -297,20 +455,19 @@ const ScriptEditor: FC<{ metadata: UnifiedMetadata }> = ({ metadata }) => {
 
       const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-      const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor
       const fn = new AsyncFunction(
-        "api", "signer", "console", "Binary", "getDevSigner", "createSigner", "sleep",
+        "api", "console", "Binary", "createSigner", "fromSecretKey", "sleep", "walletSigner",
         script
       )
 
       await fn(
         unsafeApi,
-        activeSigner,
         mockConsole,
         Binary,
-        getDevSigner,
         createSigner,
-        sleep
+        fromSecretKey,
+        sleep,
+        account?.signer ?? null
       )
       pushLog("--- done ---")
     } catch (e) {
@@ -333,13 +490,21 @@ const ScriptEditor: FC<{ metadata: UnifiedMetadata }> = ({ metadata }) => {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const shareScript = async () => {
+    const encoded = encodeScript(script)
+    if (!encoded) return
+    const url = `${window.location.origin}${window.location.pathname}?code=${encoded}`
+    await navigator.clipboard.writeText(url)
+    setShared(true)
+    setTimeout(() => setShared(false), 2000)
+  }
+
   return (
     <div className="flex flex-col gap-2 overflow-hidden flex-1">
       <div className="flex gap-2 items-center flex-wrap">
         {!isRunning ? (
           <ActionButton
             onClick={runScript}
-            disabled={!activeSigner}
             className="flex items-center gap-2"
           >
             <Play size={16} />
@@ -355,8 +520,34 @@ const ScriptEditor: FC<{ metadata: UnifiedMetadata }> = ({ metadata }) => {
           </ActionButton>
         )}
 
-        <ActionButton onClick={copyScript} className="flex items-center gap-1">
+        <ActionButton
+          onClick={() => {
+            undoRedoRef.current?.undo()
+            forceUpdate(n => n + 1)
+          }}
+          className="flex items-center gap-1 text-foreground/70"
+          title="Undo (Ctrl+Z)"
+        >
+          <Undo2 size={16} />
+        </ActionButton>
+
+        <ActionButton
+          onClick={() => {
+            undoRedoRef.current?.redo()
+            forceUpdate(n => n + 1)
+          }}
+          className="flex items-center gap-1 text-foreground/70"
+          title="Redo (Ctrl+Shift+Z)"
+        >
+          <Redo2 size={16} />
+        </ActionButton>
+
+        <ActionButton onClick={copyScript} className="flex items-center gap-1" title="Copy script">
           {copied ? <Check size={16} /> : <Copy size={16} />}
+        </ActionButton>
+
+        <ActionButton onClick={shareScript} className="flex items-center gap-1" title="Copy shareable URL">
+          {shared ? <Check size={16} /> : <Share2 size={16} />}
         </ActionButton>
 
         <ActionButton
@@ -375,64 +566,61 @@ const ScriptEditor: FC<{ metadata: UnifiedMetadata }> = ({ metadata }) => {
           <Trash2 size={16} />
         </ActionButton>
 
-        <select
-          value={signerMode}
-          onChange={e => setSignerMode(e.target.value as "wallet" | "dev" | "custom")}
-          className="px-2 py-1 border rounded bg-background text-foreground text-sm"
-        >
-          <option value="wallet">Wallet</option>
-          <option value="dev">Dev Account</option>
-          <option value="custom">Mnemonic</option>
-        </select>
-
-        {signerMode === "wallet" && (
-          <div className="min-w-[180px] max-w-[280px]">
-            <AccountPicker
-              value={account}
-              onChange={setAccount}
-              groups={groups}
-              className={cn("w-full")}
-              renderAddress={(account) => (
-                <AddressIdentity
-                  addr={account.address}
-                  name={account?.name}
-                  copyable={false}
-                />
-              )}
-            />
-          </div>
-        )}
-
-        {signerMode === "dev" && (
+        <div className="flex items-center gap-1 ml-2 border-l pl-2 border-foreground/20">
+          <span className="text-xs text-foreground/50">signer:</span>
           <select
-            value={devAccount}
-            onChange={e => setDevAccount(e.target.value)}
-            className="px-2 py-1 border rounded bg-background text-foreground text-sm"
+            className="px-2 py-1 border rounded bg-background text-foreground text-xs"
+            defaultValue=""
+            onChange={(e) => {
+              if (!e.target.value) return
+              let code = ""
+              if (e.target.value === "mnemonic") {
+                code = `const signer = createSigner("word1 word2 ... word12")\n`
+              } else if (e.target.value === "secretkey") {
+                code = `const signer = fromSecretKey("0x...")\n`
+              } else if (e.target.value === "wallet") {
+                code = `const signer = walletSigner  // from wallet picker\n`
+              } else {
+                code = `const signer = createSigner("${DEFAULT_MNEMONIC}//${e.target.value}")\n`
+              }
+              setScript(code + script)
+              e.target.value = ""
+            }}
           >
-            {["Alice", "Bob", "Charlie", "Dave", "Eve", "Ferdie"].map(name => (
-              <option key={name} value={name}>{name}</option>
-            ))}
+            <option value="">insert...</option>
+            <optgroup label="Wallet">
+              <option value="wallet">Use wallet signer</option>
+            </optgroup>
+            <optgroup label="Dev Accounts">
+              {["Alice", "Bob", "Charlie", "Dave", "Eve", "Ferdie"].map(name => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Custom">
+              <option value="mnemonic">From mnemonic</option>
+              <option value="secretkey">From secret key</option>
+            </optgroup>
           </select>
-        )}
-
-        {signerMode === "custom" && (
-          <div className="flex gap-1 items-center">
-            <input
-              type="password"
-              placeholder="12-word mnemonic..."
-              value={customMnemonic}
-              onChange={e => setCustomMnemonic(e.target.value)}
-              className="px-2 py-1 border rounded bg-background text-foreground text-sm w-[200px]"
-            />
-            <input
-              type="text"
-              placeholder="//path"
-              value={customDerivation}
-              onChange={e => setCustomDerivation(e.target.value)}
-              className="px-2 py-1 border rounded bg-background text-foreground text-sm w-[80px]"
-            />
+          <div className="min-w-[140px]">
+            {groups.length > 0 ? (
+              <AccountPicker
+                value={account}
+                onChange={setAccount}
+                groups={groups}
+                className={cn("w-full text-xs")}
+                renderAddress={(account) => (
+                  <AddressIdentity
+                    addr={account.address}
+                    name={account?.name}
+                    copyable={false}
+                  />
+                )}
+              />
+            ) : (
+              <span className="text-xs text-foreground/40">no wallets</span>
+            )}
           </div>
-        )}
+        </div>
 
         {isRunning && <Spinner size={16} />}
       </div>
@@ -444,6 +632,9 @@ const ScriptEditor: FC<{ metadata: UnifiedMetadata }> = ({ metadata }) => {
           setErrors([])
         }}
         errors={errors}
+        suggestions={editorSuggestions}
+        onRun={runScript}
+        undoRedoRef={undoRedoRef}
         className="flex-1 min-h-[300px] overflow-auto border rounded"
       />
 
@@ -546,13 +737,13 @@ const ScriptEditor: FC<{ metadata: UnifiedMetadata }> = ({ metadata }) => {
 
 export const Script = withSubscribe(
   () => {
-    const { metadata } = useStateObservable(runtimeCtx$)
+    const metadata = useStateObservable(metadata$)
 
     return (
       <div className="flex flex-col overflow-hidden gap-2 p-4 absolute w-full h-full max-w-(--breakpoint-xl)">
         <h1 className="text-xl font-medium">Script Editor</h1>
         <p className="text-foreground/60 text-sm">
-          Write and execute papi scripts. Use Ctrl+Space for autocomplete.
+          Write and execute papi scripts. Ctrl+Space for palette, Ctrl+Enter to run.
         </p>
         <ScriptEditor metadata={metadata} />
       </div>
